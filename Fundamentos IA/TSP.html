@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solucionador TSP (Agente Viajero)</title>
+    <!-- vis-network para grafos y árboles -->
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <style>
+        :root {
+            --primary: #0056b3;
+            --bg: #f8f9fa;
+            --border: #dee2e6;
+            --success: #28a745;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg);
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }
+        h1, h2 { color: var(--primary); }
+        .config-panel {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .matrix-table {
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        .matrix-table th, .matrix-table td {
+            border: 1px solid var(--border);
+            padding: 8px;
+            text-align: center;
+        }
+        .matrix-table th { background-color: #e9ecef; }
+        input[type="number"] {
+            width: 60px;
+            padding: 5px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        input[type="number"]:disabled { background-color: #e9ecef; }
+        button {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-top: 15px;
+        }
+        button:hover { background-color: #004494; }
+        .visualizations {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .canvas-container {
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .network-div {
+            width: 100%;
+            height: 500px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        #results {
+            margin-top: 15px;
+            padding: 15px;
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            border-radius: 4px;
+            display: none;
+            font-weight: bold;
+        }
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin: 10px 0 0;
+            font-size: 13px;
+            color: #555;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .legend-swatch {
+            width: 14px;
+            height: 14px;
+            border-radius: 3px;
+            display: inline-block;
+            border: 1px solid rgba(0,0,0,0.15);
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Solucionador del Problema del Agente Viajero (TSP)</h1>
+    
+    <div class="config-panel">
+        <label for="numCities"><strong>Número de ciudades (3 a 6): </strong></label>
+        <input type="number" id="numCities" min="3" max="6" value="4" onchange="generateMatrix()">
+        <div id="matrixContainer"></div>
+        <button onclick="solveTSP()">Calcular y Animar TSP</button>
+        <div id="results"></div>
+    </div>
+
+    <div class="visualizations">
+        <div class="canvas-container">
+            <h2>Grafo de Ciudades</h2>
+            <p>Se animará la ruta óptima encontrada.</p>
+            <div class="legend">
+                <span class="legend-item"><span class="legend-swatch" style="background:#999;"></span>Conexión disponible</span>
+                <span class="legend-item"><span class="legend-swatch" style="background:#28a745;"></span>Ruta óptima (animada)</span>
+            </div>
+            <div id="graph" class="network-div"></div>
+        </div>
+        <div class="canvas-container">
+            <h2>Árbol de Solución</h2>
+            <p>Exploración de estados (Fuerza Bruta).</p>
+            <div class="legend">
+                <span class="legend-item"><span class="legend-swatch" style="background:#cce5ff;"></span>Explorando</span>
+                <span class="legend-item"><span class="legend-swatch" style="background:#f8d7da;"></span>Ruta completa</span>
+                <span class="legend-item"><span class="legend-swatch" style="background:#d4edda;"></span>Ruta óptima</span>
+            </div>
+            <div id="tree" class="network-div"></div>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================================
+        // Estado global
+        // ==========================================================
+        let graphNetwork = null;
+        let treeNetwork = null;
+        let animationInterval = null;
+
+        // Nombres de ciudades (A, B, C, D, E, F)
+        const getCityName = (index) => String.fromCharCode(65 + index);
+
+        // ==========================================================
+        // Matriz de costos (entrada del usuario)
+        // ==========================================================
+
+        // Genera la tabla dinámica para ingresar costos
+        function generateMatrix() {
+            const n = parseInt(document.getElementById('numCities').value);
+            const container = document.getElementById('matrixContainer');
+            if (n < 3 || n > 6) {
+                alert("Por favor ingresa un número entre 3 y 6.");
+                return;
+            }
+
+            // Generar los costos aleatorios una sola vez por par de ciudades,
+            // para que la matriz nazca simétrica (el costo A→B debe ser igual a B→A).
+            let randomCosts = Array(n).fill(0).map(() => Array(n).fill(0));
+            for (let i = 0; i < n; i++) {
+                for (let j = i + 1; j < n; j++) {
+                    const cost = Math.floor(Math.random() * 40) + 10;
+                    randomCosts[i][j] = cost;
+                    randomCosts[j][i] = cost;
+                }
+            }
+
+            let html = '<table class="matrix-table"><tr><th></th>';
+            for (let i = 0; i < n; i++) html += `<th>${getCityName(i)}</th>`;
+            html += '</tr>';
+
+            for (let i = 0; i < n; i++) {
+                html += `<tr><th>${getCityName(i)}</th>`;
+                for (let j = 0; j < n; j++) {
+                    if (i === j) {
+                        html += `<td><input type="number" value="0" disabled></td>`;
+                    } else {
+                        // Generar ID único para simetría
+                        html += `<td><input type="number" id="cost_${i}_${j}" oninput="syncInputs(${i}, ${j})" value="${randomCosts[i][j]}"></td>`;
+                    }
+                }
+                html += '</tr>';
+            }
+            html += '</table>';
+            container.innerHTML = html;
+        }
+
+        // Mantiene la matriz simétrica
+        function syncInputs(i, j) {
+            const val = document.getElementById(`cost_${i}_${j}`).value;
+            const symmetric = document.getElementById(`cost_${j}_${i}`);
+            if (symmetric) symmetric.value = val;
+        }
+
+        // Obtiene la matriz de costos de la interfaz
+        function getMatrix(n) {
+            let matrix = Array(n).fill(0).map(() => Array(n).fill(0));
+            for (let i = 0; i < n; i++) {
+                for (let j = 0; j < n; j++) {
+                    if (i !== j) {
+                        matrix[i][j] = parseInt(document.getElementById(`cost_${i}_${j}`).value) || 0;
+                    }
+                }
+            }
+            return matrix;
+        }
+
+        // ==========================================================
+        // Algoritmo TSP por fuerza bruta (DFS) + construcción del árbol
+        // ==========================================================
+        function solveTSP() {
+            clearInterval(animationInterval); // Resetear animación previa
+            const n = parseInt(document.getElementById('numCities').value);
+            const matrix = getMatrix(n);
+
+            let bestCost = Infinity;
+            let bestPath = [];
+            
+            // Variables para Vis.js
+            let treeNodes = new vis.DataSet();
+            let treeEdges = new vis.DataSet();
+            
+            // DFS Recursivo para explorar rutas y construir el árbol
+            function dfs(currentCity, visited, path, currentCost, parentId) {
+                let nodeId = path.join('-');
+                let nodeLabel = `${getCityName(currentCity)}\nCosto: ${currentCost}`;
+                
+                // Agregar nodo al árbol
+                treeNodes.add({ 
+                    id: nodeId, 
+                    label: nodeLabel, 
+                    level: path.length,
+                    color: { background: '#cce5ff', border: '#004085' }
+                });
+
+                // Conectar con el padre en el árbol. El id es predecible (edge_<nodo>)
+                // para poder ubicar y animar la arista de llegada a cada nodo después.
+                if (parentId) {
+                    let costToCurrent = matrix[path[path.length - 2]][currentCity];
+                    treeEdges.add({ id: `edge_${nodeId}`, from: parentId, to: nodeId, label: costToCurrent.toString() });
+                }
+
+                // Caso base: se visitaron todas las ciudades
+                if (visited.length === n) {
+                    let returnCost = matrix[currentCity][path[0]];
+                    let finalCost = currentCost + returnCost;
+                    let finalId = nodeId + `-${path[0]}`;
+                    
+                    treeNodes.add({ 
+                        id: finalId, 
+                        label: `${getCityName(path[0])}\nTotal: ${finalCost}`, 
+                        level: path.length + 1,
+                        color: { background: '#f8d7da', border: '#721c24' }
+                    });
+                    treeEdges.add({ id: `edge_${finalId}`, from: nodeId, to: finalId, label: returnCost.toString() });
+
+                    if (finalCost < bestCost) {
+                        bestCost = finalCost;
+                        bestPath = [...path, path[0]];
+                    }
+                    return;
+                }
+
+                // Explorar vecinos en orden de costo ascendente (el más barato primero),
+                // para que el árbol se lea de forma más intuitiva. Sigue siendo fuerza
+                // bruta: de todas formas se exploran TODAS las combinaciones posibles.
+                const vecinos = [];
+                for (let i = 0; i < n; i++) {
+                    if (!visited.includes(i)) vecinos.push(i);
+                }
+                vecinos.sort((a, b) => matrix[currentCity][a] - matrix[currentCity][b]);
+
+                for (const i of vecinos) {
+                    dfs(i, [...visited, i], [...path, i], currentCost + matrix[currentCity][i], nodeId);
+                }
+            }
+
+            // Iniciar DFS desde la ciudad 0 (A)
+            dfs(0, [0], [0], 0, null);
+
+            // Mostrar resultados
+            const resultPathStr = bestPath.map(idx => getCityName(idx)).join(' → ');
+            const resDiv = document.getElementById('results');
+            resDiv.style.display = 'block';
+            resDiv.innerHTML = `Ruta Óptima: ${resultPathStr} <br> Costo Mínimo: ${bestCost}`;
+
+            const graphEdges = renderGraph(n, matrix, bestPath);
+            renderTree(treeNodes, treeEdges);
+
+            // El resaltado de la ruta óptima ya no se pinta de una vez: se anima
+            // en el grafo y en el árbol al mismo tiempo y con el mismo ritmo.
+            animateSolution(graphEdges, treeNodes, treeEdges, bestPath);
+        }
+
+        // ==========================================================
+        // Grafo de ciudades y animación de la ruta óptima
+        // ==========================================================
+        function renderGraph(n, matrix, bestPath) {
+            let nodes = new vis.DataSet();
+            let edges = new vis.DataSet();
+
+            // Ubicar las ciudades en un círculo con posiciones fijas. Con física
+            // (layout dinámico) los nodos podían quedar muy juntos y las líneas
+            // rectas se cruzaban en el centro, apilando ahí las etiquetas de costo.
+            const radius = 150 + n * 20;
+            for (let i = 0; i < n; i++) {
+                const angle = (2 * Math.PI * i) / n - Math.PI / 2;
+                nodes.add({
+                    id: i,
+                    label: getCityName(i),
+                    font: { size: 20 },
+                    margin: 10,
+                    x: radius * Math.cos(angle),
+                    y: radius * Math.sin(angle),
+                    fixed: true
+                });
+            }
+
+            // Crear aristas (solo una por par para visualización, ya que es simétrico).
+            // Cada arista se curva un poco distinto para que, cuando dos aristas
+            // cruzan cerca del centro (p. ej. las diagonales), sus etiquetas no
+            // caigan exactamente en el mismo punto.
+            let edgeIndex = 0;
+            for (let i = 0; i < n; i++) {
+                for (let j = i + 1; j < n; j++) {
+                    let edgeId = `${i}-${j}`;
+                    edges.add({
+                        id: edgeId,
+                        from: i,
+                        to: j,
+                        label: matrix[i][j].toString(),
+                        font: { align: 'horizontal', size: 13, background: 'white', strokeWidth: 0 },
+                        color: { color: '#999', opacity: 0.5 },
+                        width: 1,
+                        smooth: { type: 'curvedCW', roundness: 0.12 + (edgeIndex % 4) * 0.07 }
+                    });
+                    edgeIndex++;
+                }
+            }
+
+            const container = document.getElementById('graph');
+            const data = { nodes: nodes, edges: edges };
+            const options = {
+                physics: false
+            };
+
+            if (graphNetwork) graphNetwork.destroy();
+            graphNetwork = new vis.Network(container, data, options);
+            graphNetwork.fit();
+
+            return edges;
+        }
+
+        // Anima el grafo de ciudades y el árbol de búsqueda a la vez: en cada
+        // paso se resalta la arista recorrida en el grafo junto con el nodo y
+        // la rama correspondientes de la ruta óptima en el árbol. Ambas se
+        // reinician juntas para repetirse en bucle.
+        function animateSolution(graphEdges, treeNodes, treeEdges, bestPath) {
+            if (animationInterval) clearInterval(animationInterval);
+
+            // Cada arista del grafo se crea una sola vez como par (i, j) con i < j,
+            // pero la ruta puede recorrerla en cualquier sentido. Por eso la flecha
+            // debe activarse en el extremo "to" o "from" según el sentido real del recorrido.
+            const getGraphEdgeId = (from, to) => {
+                const p1 = Math.min(from, to);
+                const p2 = Math.max(from, to);
+                return `${p1}-${p2}`;
+            };
+
+            // IDs de los nodos del árbol a lo largo de la ruta óptima (raíz -> hoja final)
+            // y de las aristas que los conectan (ver id `edge_<nodo>` asignado en el DFS).
+            let treePathNodeIds = [];
+            let acc = '';
+            for (let i = 0; i < bestPath.length; i++) {
+                acc += (i === 0) ? bestPath[i] : `-${bestPath[i]}`;
+                treePathNodeIds.push(acc);
+            }
+            const treePathEdgeIds = treePathNodeIds.slice(1).map(id => `edge_${id}`);
+
+            // Colores originales de los nodos del árbol, para poder restaurarlos en cada vuelta
+            const originalNodeColors = {};
+            treePathNodeIds.forEach(id => {
+                originalNodeColors[id] = treeNodes.get(id).color;
+            });
+
+            const highlightColor = { color: '#28a745' };
+            const highlightNodeColor = { background: '#d4edda', border: '#28a745' };
+
+            const resetGraph = () => {
+                graphEdges.forEach(edge => {
+                    graphEdges.update({
+                        id: edge.id,
+                        color: { color: '#999', opacity: 0.5 },
+                        width: 1,
+                        arrows: { to: { enabled: false }, from: { enabled: false } }
+                    });
+                });
+            };
+
+            const resetTree = () => {
+                treePathNodeIds.forEach(id => treeNodes.update({ id, color: originalNodeColors[id] }));
+                treePathEdgeIds.forEach(id => treeEdges.update({ id, color: { color: '#adb5bd' }, width: 1 }));
+                // El nodo raíz se marca como punto de partida del recorrido
+                treeNodes.update({ id: treePathNodeIds[0], color: highlightNodeColor });
+            };
+
+            let step = 0;
+            resetGraph();
+            resetTree();
+
+            animationInterval = setInterval(() => {
+                // Al llegar al final del recorrido, se limpia todo y se reinicia
+                // la animación para que sea repetitiva.
+                if (step >= bestPath.length - 1) {
+                    step = 0;
+                    resetGraph();
+                    resetTree();
+                    return;
+                }
+
+                const from = bestPath[step];
+                const to = bestPath[step + 1];
+
+                // Grafo: resaltar la arista recorrida en este paso
+                const graphEdgeId = getGraphEdgeId(from, to);
+                const sentidoOriginal = from < to; // true si el recorrido va de p1 -> p2
+                graphEdges.update({
+                    id: graphEdgeId,
+                    color: { color: '#28a745', opacity: 1 },
+                    width: 4,
+                    arrows: {
+                        to: { enabled: sentidoOriginal, type: 'arrow' },
+                        from: { enabled: !sentidoOriginal, type: 'arrow' }
+                    }
+                });
+
+                // Árbol: resaltar la rama y el nodo al que se llega en este mismo paso
+                treeEdges.update({ id: treePathEdgeIds[step], color: highlightColor, width: 3 });
+                treeNodes.update({ id: treePathNodeIds[step + 1], color: highlightNodeColor });
+
+                step++;
+            }, 1000); // 1 segundo por paso, igual para ambas animaciones
+        }
+
+        // ==========================================================
+        // Árbol de exploración de estados
+        // ==========================================================
+
+        function renderTree(nodes, edges) {
+            const container = document.getElementById('tree');
+            const data = { nodes: nodes, edges: edges };
+            const options = {
+                layout: {
+                    hierarchical: {
+                        direction: 'UD',
+                        sortMethod: 'directed',
+                        levelSeparation: 100,
+                        nodeSpacing: 140
+                    }
+                },
+                physics: false,
+                nodes: {
+                    // 'box' se ajusta al contenido, a diferencia de la elipse por
+                    // defecto, que recortaba las etiquetas de dos líneas ("Costo: X").
+                    shape: 'box',
+                    margin: { top: 8, right: 10, bottom: 8, left: 10 },
+                    font: { size: 13, color: '#212529', multi: false },
+                    widthConstraint: { minimum: 70 }
+                },
+                edges: {
+                    arrows: 'to',
+                    font: { size: 12, align: 'top', background: 'rgba(255,255,255,0.85)', strokeWidth: 0 },
+                    color: { color: '#adb5bd' }
+                }
+            };
+
+            if (treeNetwork) treeNetwork.destroy();
+            treeNetwork = new vis.Network(container, data, options);
+        }
+
+        // ==========================================================
+        // Inicialización
+        // ==========================================================
+        window.onload = generateMatrix;
+    </script>
+</body>
+</html>
